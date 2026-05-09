@@ -1,7 +1,7 @@
 import os
 import json
 import re
-import google.generativeai as genai
+from groq import Groq  # Updated Import
 from dotenv import load_dotenv
 
 # Load variables from .env file
@@ -10,45 +10,51 @@ load_dotenv()
 class ArchitectAgent:
     def __init__(self):
         # 1. API Configuration
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY")  # Ensure this is in your .env
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found. Please check your .env file.")
+            raise ValueError("GROQ_API_KEY not found. Please check your .env file.")
             
-        genai.configure(api_key=api_key)
+        self.client = Groq(api_key=api_key)
         
-        # 2. Model Setup - Keeping your specific model choice
-        self.model_name = 'models/gemini-3-flash-preview'
+        # 2. Model Setup - Llama 3.3 70B is highly reliable for JSON
+        self.model_name = 'llama-3.3-70b-versatile'
         
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=(
-                "You are a Senior Software Architect. Your task is to decompose user prompts "
-                "into structured project plans. You must output ONLY raw JSON. "
-                "CRITICAL: Do not include introductory text, bullet points, goals, or headers. "
-                "Do not include markdown backticks (```json). "
-                "Your entire response must start with '{' and end with '}'. "
-                "Ensure keys are always double-quoted and values are properly escaped."
-            )
-        )
-        print(f"DEBUG: Architect initialized using {self.model_name}")
+        print(f"DEBUG: Architect initialized using Groq ({self.model_name})")
 
     def create_plan(self, prompt: str):
         print(f"\n[DEBUG] Architect: Planning architecture for: '{prompt}'...")
         
+        # System instructions are passed in the messages list for Groq/OpenAI style
+        system_instruction = (
+            "You are a Senior Software Architect. Your task is to decompose user prompts "
+            "into structured project plans. You must output ONLY raw JSON. "
+            "CRITICAL: Do not include introductory text, bullet points, or markdown backticks. "
+            "Your entire response must be a single valid JSON object."
+        )
+
         prompt_template = (
             f"Generate a project plan for: '{prompt}'.\n\n"
             "The JSON must strictly contain these keys:\n"
-            "1. 'db_schema': A single string with SQLite CREATE TABLE statements for products, categories, and orders.\n"
-            "2. 'components': A list of React component names (e.g., ['Header', 'ProductList']).\n"
-            "3. 'endpoints': A list of FastAPI route strings (e.g., ['/products', '/cart/add']).\n"
-            "4. 'ui_theme': A description of the visual style (e.g., 'Gold and Black luxury theme').\n\n"
+            "1. 'db_schema': A single string with SQLite CREATE TABLE statements.\n"
+            "2. 'components': A list of React component names.\n"
+            "3. 'endpoints': A list of FastAPI route strings.\n"
+            "4. 'ui_theme': A description of the visual style.\n\n"
             "STRICT: No conversational filler. JSON only."
         )
         
         try:
-            # 3. Generate Content
-            response = self.model.generate_content(prompt_template)
-            text = response.text.strip()
+            # 3. Generate Content using Groq SDK
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt_template}
+                ],
+                temperature=0.2, # Lower temperature for better JSON consistency
+                response_format={"type": "json_object"} # Groq supports hardware-level JSON mode
+            )
+            
+            text = response.choices[0].message.content.strip()
             
             # DEBUG: See what the model actually returned
             print("-" * 30)
@@ -56,37 +62,22 @@ class ArchitectAgent:
             print(f"DEBUG: START OF OUTPUT: {text[:100]}...") 
             print("-" * 30)
 
-            # 4. ROBUST JSON EXTRACTION
-            # Using r"" (Raw strings) to fix SyntaxWarnings
-            json_match = re.search(r"\{.*\}", text, re.DOTALL)
-            
-            if not json_match:
-                print("[DEBUG] WARNING: Regex failed to find curly braces. Checking for markdown blocks...")
-                # Using r"" (Raw strings) here as well
-                markdown_match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
-                if markdown_match:
-                    clean_json = markdown_match.group(1)
-                else:
-                    raise ValueError("No JSON object or markdown block found in response.")
-            else:
-                clean_json = json_match.group(0)
-            
-            # 5. Final attempt to parse
+            # 4. JSON PARSING
             try:
-                parsed_plan = json.loads(clean_json)
+                parsed_plan = json.loads(text)
                 print("[DEBUG] Architect: Plan successfully parsed and validated.")
                 return parsed_plan
             except json.JSONDecodeError as je:
-                print(f"[DEBUG] JSON REPAIR: Initial parse failed ({je}). Attempting substring repair...")
-                return self._repair_json(clean_json)
+                # Substring repair as a safety net
+                print(f"[DEBUG] JSON REPAIR: Attempting substring repair...")
+                return self._repair_json(text)
             
         except Exception as e:
             print(f"[DEBUG] GENERAL ERROR in Architect: {e}")
             return self._get_fallback_plan(str(e))
 
     def _repair_json(self, text):
-        """Attempts to find a valid JSON object using raw string regex to avoid warnings."""
-        # Fix: Using r'\{' and r'\}' for raw string literals
+        """Attempts to find a valid JSON object using raw string regex."""
         starts = [m.start() for m in re.finditer(r'\{', text)]
         ends = [m.start() for m in re.finditer(r'\}', text)]
         
@@ -102,7 +93,6 @@ class ArchitectAgent:
         raise ValueError("Could not extract a valid JSON structure from the response.")
 
     def _get_fallback_plan(self, reason):
-        """Ensures the system never crashes by providing a high-quality default."""
         print(f"[DEBUG] SYSTEM: Triggering Fallback Plan. Reason: {reason}")
         return {
             "db_schema": (
