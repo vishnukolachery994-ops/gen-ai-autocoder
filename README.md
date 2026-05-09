@@ -1,10 +1,4 @@
-Got it. That is an important distinction to make in the README. The **`frontend/`** folder in your root directory is part of the **Orchestrator's internal UI** (handling things like the Master Prompt and the live log display), while the **`generated_project/`** folder contains the final output for the user.
 
-Including **`cart.py`** in the `frontend/` folder suggests it handles the logic for the Orchestrator's dashboard state or temporary session management.
-
-Here is the updated **README.md** with the corrected folder structure.
-
----
 
 # 🤖 GenAI AutoCoder: Autonomous Full-Stack Engine (POC)
 
