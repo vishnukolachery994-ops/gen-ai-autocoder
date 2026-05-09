@@ -84,4 +84,4 @@ uvicorn main:app --port 8001
 
 ---
 
-**Developed by:** Vishnu | AI Engineer Intern | 2025 ECE Graduate
+**Developed by:** Vishnu 
