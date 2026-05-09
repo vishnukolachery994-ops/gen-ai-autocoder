@@ -1,7 +1,7 @@
 import os
 import time
 import re
-import google.generativeai as genai
+from groq import Groq # New Import
 from dotenv import load_dotenv
 
 # Load variables from .env file
@@ -10,29 +10,17 @@ load_dotenv()
 class CoderAgent:
     def __init__(self):
         # 1. API Configuration
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY") # Ensure this is in your .env
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found. Please check your .env file.")
+            raise ValueError("GROQ_API_KEY not found. Please check your .env file.")
         
-        genai.configure(api_key=api_key)
+        self.client = Groq(api_key=api_key)
         
-        # 2. Model Setup
-        self.model_name = 'models/gemini-3-flash-preview' 
+        # 2. Model Setup - Llama 3.3 70B is top-tier for production code
+        self.model_name = 'llama-3.3-70b-versatile' 
         
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=(
-                "You are a professional Full-Stack Engine. "
-                "Output ONLY raw, production-ready code. No markdown, no chatter. "
-                "DESIGN PHILOSOPHY: Default to a clean, professional e-commerce layout (Amazon/Flipkart style). "
-                "Use white backgrounds, light gray borders (#e5e7eb), and high-contrast text. "
-                "Buttons should be prominent (e.g., Amber/Yellow for primary actions). "
-                "ONLY deviate from this design if the specific prompt mentions a different color or theme. "
-                "Start immediately with imports."
-            )
-        )
         self.project_root = "generated_project"
-        print(f"DEBUG: Coder initialized using {self.model_name}")
+        print(f"DEBUG: Coder initialized using Groq ({self.model_name})")
 
     def generate_files(self, plan: dict):
         """Processes the plan to create a professional marketplace project structure."""
@@ -57,8 +45,6 @@ class CoderAgent:
             self._write_file(os.path.join(self.project_root, "backend", "database.py"), db_code)
             generated_files.append("backend/database.py")
         
-        time.sleep(4) # Increased delay to prevent rate limits
-
         # 3. FastAPI Server
         print("[DEBUG] Coder: Generating Functional API...")
         api_prompt = (
@@ -75,7 +61,6 @@ class CoderAgent:
 
         # 4. UI Components
         for component in plan.get('components', []):
-            time.sleep(4) # Respecting API quotas
             print(f"[DEBUG] Coder: Generating Component: {component}...")
             
             ui_prompt = (
@@ -98,20 +83,28 @@ class CoderAgent:
         return generated_files
 
     def _ask_llm(self, prompt, retries=3):
-        """Advanced cleaning with built-in retry logic for 500 errors."""
+        """Robust code extraction with Groq SDK and retry logic."""
+        system_instr = (
+            "You are a professional Full-Stack Engine. "
+            "Output ONLY raw, production-ready code. No markdown, no chatter. "
+            "Start immediately with imports. Use Tailwind CSS for UI."
+        )
+
         for i in range(retries):
             try:
-                response = self.model.generate_content(prompt)
+                completion = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": system_instr},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                )
                 
-                # Check if response is valid
-                if not response or not response.text:
-                    raise ValueError("Empty response from AI")
-
-                code = response.text.strip()
+                code = completion.choices[0].message.content.strip()
                 
-                # Filter out the 'Internal error' text if it appears in the text
-                if "Internal error encountered" in code:
-                    raise Exception("500 Error within response text")
+                if not code:
+                    raise ValueError("Empty response from Groq")
 
                 # Remove Markdown block wrappers
                 code = re.sub(r"```[a-zA-Z]*", "", code).replace("```", "")
@@ -133,11 +126,10 @@ class CoderAgent:
                 return "\n".join(cleaned_lines).strip()
 
             except Exception as e:
-                # If it's a 500 error or rate limit, wait and retry
-                print(f"[DEBUG] LLM Attempt {i+1} failed: {e}. Retrying...")
-                time.sleep(5 * (i + 1)) # Wait longer each time (5s, 10s...)
+                print(f"[DEBUG] Groq Attempt {i+1} failed: {e}. Retrying...")
+                time.sleep(2 * (i + 1)) # Groq is faster, shorter waits are okay
                 
-        return None # Return None so generate_files knows to skip writing
+        return None
 
     def _write_file(self, path, content):
         """Standard file writing utility."""
