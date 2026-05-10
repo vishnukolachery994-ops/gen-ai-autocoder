@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from groq import Groq  # Updated Import
+import google.generativeai as genai  # Changed from Groq
 from dotenv import load_dotenv
 
 # Load variables from .env file
@@ -10,21 +10,26 @@ load_dotenv()
 class ArchitectAgent:
     def __init__(self):
         # 1. API Configuration
-        api_key = os.getenv("GROQ_API_KEY")  # Ensure this is in your .env
+        # Ensure you have GEMINI_API_KEY in your .env
+        api_key = os.getenv("GEMINI_API_KEY") 
         if not api_key:
-            raise ValueError("GROQ_API_KEY not found. Please check your .env file.")
+            raise ValueError("GEMINI_API_KEY not found. Please check your .env file.")
             
-        self.client = Groq(api_key=api_key)
+        genai.configure(api_key=api_key)
         
-        # 2. Model Setup - Llama 3.3 70B is highly reliable for JSON
-        self.model_name = 'llama-3.3-70b-versatile'
+        # 2. Model Setup - Using the specific Gemini model requested
+        self.model_name = ' models/gemini-2.0-flash ' 
+        self.client = genai.GenerativeModel(
+            model_name=self.model_name,
+            generation_config={"response_mime_type": "application/json"}
+        )
         
-        print(f"DEBUG: Architect initialized using Groq ({self.model_name})")
+        print(f"DEBUG: Architect initialized using Gemini ({self.model_name})")
 
     def create_plan(self, prompt: str):
         print(f"\n[DEBUG] Architect: Planning architecture for: '{prompt}'...")
         
-        # System instructions are passed in the messages list for Groq/OpenAI style
+        # System instructions combined with prompt for Gemini
         system_instruction = (
             "You are a Senior Software Architect. Your task is to decompose user prompts "
             "into structured project plans. You must output ONLY raw JSON. "
@@ -33,6 +38,7 @@ class ArchitectAgent:
         )
 
         prompt_template = (
+            f"{system_instruction}\n\n"
             f"Generate a project plan for: '{prompt}'.\n\n"
             "The JSON must strictly contain these keys:\n"
             "1. 'db_schema': A single string with SQLite CREATE TABLE statements.\n"
@@ -43,18 +49,10 @@ class ArchitectAgent:
         )
         
         try:
-            # 3. Generate Content using Groq SDK
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": prompt_template}
-                ],
-                temperature=0.2, # Lower temperature for better JSON consistency
-                response_format={"type": "json_object"} # Groq supports hardware-level JSON mode
-            )
+            # 3. Generate Content using Gemini SDK
+            response = self.client.generate_content(prompt_template)
             
-            text = response.choices[0].message.content.strip()
+            text = response.text.strip()
             
             # DEBUG: See what the model actually returned
             print("-" * 30)
